@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, engine, init_db
 from models import Base, Video
 
-# Initialize database
+# Initialize database automatically on import
 init_db()
 
 # Initialize FastAPI app
@@ -319,13 +319,46 @@ async def get_video_api(video_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+@app.get("/api/stats")
+async def get_stats(db: Session = Depends(get_db)):
+    """Get platform statistics"""
+    try:
+        total_videos = db.query(Video).count()
+        recent_videos = db.query(Video).order_by(Video.created_at.desc()).limit(5).all()
+        
+        # Count total hashtags
+        all_hashtags = []
+        for video in db.query(Video).all():
+            all_hashtags.extend(video.hashtag_list)
+        unique_hashtags = len(set(all_hashtags))
+        
+        return {
+            "status": "success",
+            "stats": {
+                "total_videos": total_videos,
+                "unique_hashtags": unique_hashtags,
+                "recent_videos": [
+                    {
+                        "id": video.id,
+                        "title": video.title,
+                        "created_at": video.created_at.isoformat()
+                    }
+                    for video in recent_videos
+                ]
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    database_type = "SQLite" if "sqlite://" in os.getenv("DATABASE_URL", "sqlite://") else "PostgreSQL"
     return {
         "status": "healthy",
         "service": "StreamHub Video Platform",
         "version": "1.0.0",
+        "database": database_type,
         "environment": os.getenv("RENDER_SERVICE_NAME", "development")
     }
 
@@ -360,17 +393,20 @@ async def server_error_handler(request: Request, exc: HTTPException):
 @app.on_event("startup")
 async def startup_event():
     """Execute on application startup"""
-    print("🎬 StreamHub Video Streaming Platform")
+    print("\n🎬 StreamHub Video Streaming Platform")
     print("=" * 50)
     print("✅ Starting up server...")
     print("📁 Creating directories...")
     create_directories()
-    print("🗄️  Database initialized...")
+    print("🗄️  Database initialized and ready...")
     print("🚀 Server ready!")
     
     # Show environment info
     env = os.getenv("RENDER_SERVICE_NAME", "development")
+    database_type = "SQLite" if "sqlite://" in os.getenv("DATABASE_URL", "sqlite://") else "PostgreSQL"
+    
     print(f"🌍 Environment: {env}")
+    print(f"🗄️  Database: {database_type}")
     
     if env != "development":
         print("🔗 Production URLs:")
@@ -378,13 +414,33 @@ async def startup_event():
         print(f"   • Homepage: {service_url}")
         print(f"   • Admin Panel: {service_url}/admin")
         print(f"   • API Docs: {service_url}/docs")
+        print(f"   • Health Check: {service_url}/health")
+    else:
+        print("🔗 Local URLs:")
+        print("   • Homepage: http://localhost:8000")
+        print("   • Admin Panel: http://localhost:8000/admin")
+        print("   • API Docs: http://localhost:8000/docs")
+        print("   • Health Check: http://localhost:8000/health")
+    
+    print("=" * 50)
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Execute on application shutdown"""
+    print("\n👋 StreamHub shutting down...")
+    print("🔧 Cleaning up resources...")
+    print("✅ Shutdown complete")
+
+# Development server
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
+    print("🎬 Starting StreamHub in development mode...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=False
+        reload=True,
+        reload_dirs=[".", "templates", "static"],
+        log_level="info"
     )
